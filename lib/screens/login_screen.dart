@@ -36,11 +36,12 @@ class _LoginScreenState extends State<LoginScreen> {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('auth_token', response['token']);
         await prefs.setString('username', response['username']);
+        await prefs.setString('firstName', response['firstName']);
 
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (_) => ChatLobbyScreen(username: response['username']),
+            builder: (_) => ChatLobbyScreen(username: response['username'], firstName: response['firstName'],),
           ),
         );
       } else {

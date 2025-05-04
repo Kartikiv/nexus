@@ -4,6 +4,37 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:nexus/config/config.dart';
 class ApiService {
   static final baseUrl = AppConfig.baseUrl;
+  static final iceUrl = AppConfig.iceServerUrl;
+
+  static Future<List<Map<String, dynamic>>?> getIceServers() async {
+    try {
+      final response = await http.get(
+        Uri.parse(iceUrl),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final List<dynamic> jsonList = jsonDecode(response.body);
+        // Cast each element to a Map<String, dynamic>
+        final List<Map<String, dynamic>> iceServers =
+        jsonList.map((e) => Map<String, dynamic>.from(e)).toList();
+
+        print("ICE servers: $iceServers");
+        return iceServers;
+      } else {
+        print('Failed to fetch ICE servers. Status code: ${response.statusCode}');
+        return null;
+      }
+    } catch (e) {
+      print("Error getting ICE servers: $e");
+      return null;
+    }
+  }
+
+
+
 
 
   static Future<List<Map<String, String>>?> getRegisteredUsers(String userName, String token) async {
@@ -64,7 +95,9 @@ class ApiService {
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
+      final name = await getRegisteredUsers(data['username'], data['token']);
       return {
+        'firstName' : name != null && name.isNotEmpty ? name[0]['firstName'] : null,
         'username': data['username'],
         'token': data['token'],
       };

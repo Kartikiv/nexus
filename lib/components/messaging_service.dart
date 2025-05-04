@@ -1,26 +1,27 @@
 // messaging_service.dart
 import 'dart:convert';
 import 'package:stomp_dart_client/stomp_dart_client.dart';
-
 class MessagingService {
   final String username;
+  final String recipient;
   final void Function(Map<String, dynamic>) onMessageReceived;
   late StompClient _client;
 
-  MessagingService({required this.username, required this.onMessageReceived});
+  MessagingService({
+    required this.username,
+    required this.onMessageReceived,
+    required this.recipient,
+  });
 
   void connect(String jwtToken) {
-    print(jwtToken);
-    print(username);
-    var jwt = jwtToken;
     _client = StompClient(
       config: StompConfig(
         url: 'ws://138.2.224.56:8888/messaging-server/ws?name=${Uri.encodeComponent(username)}',
         stompConnectHeaders: {
-          'Authorization': 'Bearer $jwt',
+          'Authorization': 'Bearer $jwtToken',
         },
         webSocketConnectHeaders: {
-          'Authorization': 'Bearer $jwt',
+          'Authorization': 'Bearer $jwtToken',
         },
         onConnect: _onConnect,
         reconnectDelay: const Duration(seconds: 5),
@@ -31,26 +32,30 @@ class MessagingService {
   }
 
   void _onConnect(StompFrame frame) {
+    final subscriptionKey = '$username$recipient';
+    print('Subscribing to: /user/$subscriptionKey/queue/messages');
+
     _client.subscribe(
-      destination: '/user/$username/queue/messages',
+      destination: '/user/$subscriptionKey/queue/messages',
       callback: (frame) {
         final data = jsonDecode(frame.body!);
-        print("recieved:     _______________>");
-        print(data);
+        print("Received: $data");
         onMessageReceived(data);
       },
     );
   }
 
-  void sendMessage(String recipient, String text) {
-    print(text);
-    print(recipient);
+  void sendMessage(String text) {
+    final recipientKey = '$recipient$username';
+
     final message = jsonEncode({
       "sender": username,
-      "recipient": recipient,
+      "recipient": recipientKey,
       "filename": "dd",
       "content": text,
     });
+
+    print("Sending to /app/chat.sendPrivate: $message");
     _client.send(destination: '/app/chat.sendPrivate', body: message);
   }
 

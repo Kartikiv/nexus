@@ -4,19 +4,27 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../components/messaging_service.dart';
 import '../components/peer_connection_service.dart';
+import '../components/peer_videoConnectionService.dart';
 import '../components/signaling_service.dart';
 import 'package:mime/mime.dart';
 import 'package:video_player/video_player.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../components/video_preview_widget.dart';
+import 'package:open_filex/open_filex.dart';
+
+import 'callerScreen.dart';
+
+
 
 class ChatScreen extends StatefulWidget {
   final String username;
   final String recipient;
+  final String recipientName;
 
-  const ChatScreen({super.key, required this.username, required this.recipient});
+  const ChatScreen({super.key, required this.username, required this.recipient , required this.recipientName});
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -26,6 +34,8 @@ class _ChatScreenState extends State<ChatScreen> {
   late MessagingService _messagingService;
   late SignalingService _signalingService;
   PeerConnectionService? _peerConnectionService;
+  PeerVideoConnectionService? _peerVideoConnectionService;
+
 
   List<Map<String, dynamic>> _messages = [];
   final TextEditingController _messageController = TextEditingController();
@@ -48,6 +58,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     _messagingService = MessagingService(
       username: widget.username,
+      recipient: widget.recipient,
       onMessageReceived: (msg) async {
         setState(() => _messages.add(msg));
         await _saveMessages();
@@ -59,32 +70,64 @@ class _ChatScreenState extends State<ChatScreen> {
       username: widget.username,
       recipient: widget.recipient,
       onSignalReceived: (data) async {
-        if (data['type'] == 'offer') {
-          _peerConnectionService = PeerConnectionService(
-            username: widget.username,
-            recipient: widget.recipient,
-            signalingService: _signalingService,
-          )..onFileReceived = (filePath, mimeType) async {
-            final file = File(filePath);
-            final fileName = file.uri.pathSegments.last;
+        final type = data['type'];
+        final mode = data['mode'] ?? 'file';
 
-            final msg = {
-              'sender': 'them',
-              'isFile': true,
-              'filePath': filePath,
-              'mimeType': mimeType,
-              'filename': fileName,
-              'timestamp': DateTime.now(),
+        if (mode == 'file') {
+          if (type == 'offer') {
+            _peerConnectionService ??= PeerConnectionService(
+              username: widget.username,
+              recipient: widget.recipient,
+              signalingService: _signalingService,
+            )..onFileReceived = (filePath, mimeType) async {
+              final file = File(filePath);
+              final fileName = file.uri.pathSegments.last;
+              final msg = {
+                'sender': 'them',
+                'isFile': true,
+                'filePath': filePath,
+                'mimeType': mimeType,
+                'filename': fileName,
+                'timestamp': DateTime.now(),
+              };
+              if (mounted) setState(() => _messages.add(msg));
+              await _saveMessages();
             };
+            await _peerConnectionService!.initialize(asInitiator: false);
+            await _peerConnectionService!.handleSignal(data);
+          } else {
+            // Only handle answer/ice if connection exists
+            await _peerConnectionService?.handleSignal(data);
+          }
+        } else if (mode == 'video') {
+          if (type == 'offer') {
+            final accept = await _showIncomingCallDialog();
+            if (!accept) return;
 
-            setState(() => _messages.add(msg));
-            await _saveMessages();
-          };
+            _peerVideoConnectionService = PeerVideoConnectionService(
+              username: widget.username,
+              recipient: widget.recipient,
+              signalingService: _signalingService,
+            );
 
-          await _peerConnectionService!.initialize(asInitiator: false);
+            await _peerVideoConnectionService!.initialize(asInitiator: false);
+            await _peerVideoConnectionService!.handleSignal(data);
+
+            if (mounted) {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => CallScreen(connectionService: _peerVideoConnectionService!),
+                ),
+              );
+            }
+          } else {
+            // Don't handle answer/ice until the video connection is initialized
+            if (_peerVideoConnectionService != null) {
+              await _peerVideoConnectionService!.handleSignal(data);
+            }
+          }
         }
-
-        await _peerConnectionService?.handleSignal(data);
       },
     );
 
@@ -92,6 +135,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _messagingService.connect(jwt!);
     _signalingService.connect(jwt!);
   }
+
+
   Future<void> _loadStoredMessages() async {
     _prefs = await SharedPreferences.getInstance();
     final raw = _prefs.getStringList('chat_${widget.username}_${widget.recipient}');
@@ -116,6 +161,43 @@ class _ChatScreenState extends State<ChatScreen> {
 
 
   }
+  Future<bool> _showIncomingCallDialog() async {
+    return await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Incoming Video Call'),
+        content: const Text('Do you want to accept the video call?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Decline')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('Accept')),
+        ],
+      ),
+    ) ?? false;
+  }
+
+  void _startVideoCall() async {
+    final statuses = await [Permission.camera, Permission.microphone].request();
+    if (statuses[Permission.camera]!.isDenied || statuses[Permission.microphone]!.isDenied) return;
+
+    _peerVideoConnectionService = PeerVideoConnectionService(
+      username: widget.username,
+      recipient: widget.recipient,
+      signalingService: _signalingService,
+    );
+
+    await _peerVideoConnectionService!.initialize(asInitiator: true);
+
+    if (mounted) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => CallScreen(connectionService: _peerVideoConnectionService!),
+        ),
+      );
+    }
+  }
+
 
   String _inferFileName(String mimeType) {
     final extension = {
@@ -138,7 +220,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.isEmpty) return;
 
     final msg = {'sender': 'me', 'content': text, 'timestamp': DateTime.now()};
-    _messagingService.sendMessage(widget.recipient, text);
+    _messagingService.sendMessage( text);
     setState(() => _messages.add(msg));
     await _saveMessages();
     _messageController.clear();
@@ -230,17 +312,30 @@ class _ChatScreenState extends State<ChatScreen> {
       final mimeType = message['mimeType'] ?? '';
       final filename = message['filename'] ?? 'file.bin';
       final filePath = message['filePath'];
-      final file = File(filePath);
+      final file = filePath != null ? File(filePath) : null;
 
-      if (!file.existsSync()) {
-        content = Text("File not found");
+      Future<void> openFile() async {
+        if (filePath != null && await File(filePath).exists()) {
+          await OpenFilex.open(filePath);
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("File not found")),
+          );
+        }
+      }
+
+      if (file == null || !file.existsSync()) {
+        content = const Text("File not found");
       } else if (mimeType.startsWith('image/')) {
         content = Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.file(file, height: 200, width: 200, fit: BoxFit.cover),
+            GestureDetector(
+              onTap: openFile,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.file(file, height: 200, width: 200, fit: BoxFit.cover),
+              ),
             ),
             TextButton.icon(
               icon: const Icon(Icons.download),
@@ -253,7 +348,8 @@ class _ChatScreenState extends State<ChatScreen> {
             if (timestamp != null)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
-                child: Text(_formatTime(timestamp), style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                child: Text(_formatTime(timestamp),
+                    style: const TextStyle(fontSize: 10, color: Colors.grey)),
               ),
           ],
         );
@@ -261,7 +357,13 @@ class _ChatScreenState extends State<ChatScreen> {
         content = Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            VideoPreviewWidget(videoBytes: file.readAsBytesSync(), fileName: filename),
+            GestureDetector(
+              onTap: openFile,
+              child: VideoPreviewWidget(
+                videoBytes: file.readAsBytesSync(),
+                fileName: filename,
+              ),
+            ),
             TextButton.icon(
               icon: const Icon(Icons.download),
               label: const Text("Save"),
@@ -273,29 +375,36 @@ class _ChatScreenState extends State<ChatScreen> {
             if (timestamp != null)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
-                child: Text(_formatTime(timestamp), style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                child: Text(_formatTime(timestamp),
+                    style: const TextStyle(fontSize: 10, color: Colors.grey)),
               ),
           ],
         );
       } else {
-        content = Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(filename),
-            TextButton.icon(
-              icon: const Icon(Icons.download),
-              label: const Text("Save"),
-              onPressed: () async {
-                final bytes = await file.readAsBytes();
-                _saveFile(bytes, filename);
-              },
-            ),
-            if (timestamp != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(_formatTime(timestamp), style: const TextStyle(fontSize: 10, color: Colors.grey)),
+        content = GestureDetector(
+          onTap: openFile,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(filename,
+                  style: const TextStyle(decoration: TextDecoration.underline)),
+              Text("Tap to open", style: TextStyle(color: Colors.blue.shade600)),
+              TextButton.icon(
+                icon: const Icon(Icons.download),
+                label: const Text("Save"),
+                onPressed: () async {
+                  final bytes = await file.readAsBytes();
+                  _saveFile(bytes, filename);
+                },
               ),
-          ],
+              if (timestamp != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(_formatTime(timestamp),
+                      style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                ),
+            ],
+          ),
         );
       }
     } else {
@@ -306,7 +415,8 @@ class _ChatScreenState extends State<ChatScreen> {
           if (timestamp != null)
             Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: Text(_formatTime(timestamp), style: const TextStyle(fontSize: 10, color: Colors.grey)),
+              child: Text(_formatTime(timestamp),
+                  style: const TextStyle(fontSize: 10, color: Colors.grey)),
             ),
         ],
       );
@@ -338,13 +448,22 @@ class _ChatScreenState extends State<ChatScreen> {
     _messagingService.dispose();
     _signalingService.dispose();
     await _peerConnectionService?.disposeWhenComplete();
+    await _peerVideoConnectionService?.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text("Chat with ${widget.recipient}")),
+      appBar: AppBar(title: Text(widget.recipientName),
+          actions: [
+          IconButton(
+          icon: const Icon(Icons.video_call),
+      onPressed: _startVideoCall,
+    ),
+    ],),
+
+
       body: Column(
         children: [
           Expanded(

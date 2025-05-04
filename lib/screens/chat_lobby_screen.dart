@@ -8,7 +8,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class ChatLobbyScreen extends StatefulWidget {
   final String username;
-  const ChatLobbyScreen({super.key, required this.username});
+  final String firstName;
+  const ChatLobbyScreen({super.key, required this.username, required this.firstName});
 
   @override
   State<ChatLobbyScreen> createState() => _ChatLobbyScreenState();
@@ -26,6 +27,11 @@ class _ChatLobbyScreenState extends State<ChatLobbyScreen> with SingleTickerProv
     _tabController = TabController(length: 2, vsync: this);
     _loadRecentChats();
     _loadContacts();
+  }
+  Future<void> _logout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('auth_token');
+    Navigator.of(context).pushReplacementNamed('/');
   }
   void saveRecentChats() async {
     final prefs = await SharedPreferences.getInstance();
@@ -104,6 +110,8 @@ class _ChatLobbyScreenState extends State<ChatLobbyScreen> with SingleTickerProv
         builder: (_) => ChatScreen(
           username: widget.username,
           recipient: number,
+          recipientName: name,
+
         ),
       ),
     ).then((_) => setState(() {})); // Refresh on return
@@ -159,7 +167,13 @@ class _ChatLobbyScreenState extends State<ChatLobbyScreen> with SingleTickerProv
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text("Welcome, ${widget.username}"),
+        title: Text("Welcome, ${widget.firstName}"),
+        actions: [
+          IconButton(
+            icon: Icon(Icons.logout),
+            onPressed: _logout,
+          )
+        ],
         bottom: TabBar(
           controller: _tabController,
           tabs: const [

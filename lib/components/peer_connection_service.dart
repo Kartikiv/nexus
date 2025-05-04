@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:nexus/service/api_service.dart';
 import 'signaling_service.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -31,11 +32,10 @@ class PeerConnectionService {
 
   Future<void> initialize({required bool asInitiator}) async {
     isInitiator = asInitiator;
-
+     final ice = await ApiService.getIceServers();
     _peerConnection = await createPeerConnection({
-      'iceServers': [
-        {'urls': 'stun:stun.l.google.com:19302'}
-      ]
+      'iceServers': ice,
+      'iceTransportPolicy': 'relay'  // Optional: use 'relay' to force TURN
     });
 
     _peerConnection.onIceCandidate = (candidate) {
@@ -88,36 +88,48 @@ class PeerConnectionService {
         required String fileName,
       }) async {
     final file = File(filePath);
-    if (!file.existsSync()) return;
+    if (!file.existsSync()) {
+      print("❌ File not found at path: $filePath");
+      return;
+    }
 
     final fileSize = await file.length();
     const chunkSize = 16 * 1024;
 
+    print("📦 Preparing to send file: $fileName");
+    print("📐 Size: $fileSize bytes | MIME: $mimeType");
+
     if (_dataChannel == null) {
+      print("⚠️ No data channel, creating one...");
       _dataChannel = await _peerConnection.createDataChannel("fileTransfer", RTCDataChannelInit());
       _setupDataChannelHandlers();
     }
 
     int attempts = 0;
     while (!_isDataChannelOpen && attempts < 30) {
+      print("⏳ Waiting for data channel to open... Attempt: $attempts");
       await Future.delayed(const Duration(milliseconds: 300));
       attempts++;
     }
 
     if (!_isDataChannelOpen) {
-      print("Data channel failed to open");
+      print("❌ Data channel failed to open after $attempts attempts.");
       return;
     }
 
-    await _dataChannel!.send(RTCDataChannelMessage(jsonEncode({
+    final metadata = {
       "type": "file-metadata",
       "mimeType": mimeType,
       "filename": fileName,
       "length": fileSize,
-    })));
+    };
+
+    print("📨 Sending metadata: $metadata");
+    await _dataChannel!.send(RTCDataChannelMessage(jsonEncode(metadata)));
 
     final raf = file.openSync(mode: FileMode.read);
     int offset = 0;
+    int chunkIndex = 0;
 
     while (offset < fileSize) {
       final len = (offset + chunkSize > fileSize) ? fileSize - offset : chunkSize;
@@ -125,17 +137,25 @@ class PeerConnectionService {
 
       while (_dataChannel!.bufferedAmount != null &&
           _dataChannel!.bufferedAmount! > 4 * 1024 * 1024) {
+        print("📥 Buffered too much, waiting...");
         await Future.delayed(const Duration(milliseconds: 50));
       }
 
+      print("🔼 Sending chunk $chunkIndex | Offset: $offset | Size: ${chunk.length}");
       await _dataChannel!.send(RTCDataChannelMessage.fromBinary(chunk));
       offset += len;
+      chunkIndex++;
     }
 
     raf.closeSync();
+
+    print("✅ All chunks sent. Sending EOF...");
     await _dataChannel!.send(RTCDataChannelMessage("EOF"));
+
     markTransferComplete();
+    print("🎉 File transfer complete.");
   }
+
 
 
   // Future<void> sendFile(Uint8List fileBytes, {required String mimeType, required String fileName}) async {
@@ -177,21 +197,34 @@ class PeerConnectionService {
   String? _incomingFilename;
   String? _incomingMimeType;
 
+  bool _metadataReceived = false;
+
+  List<Uint8List> _earlyChunks = [];
+
   Future<void> _onMessageHandler(RTCDataChannelMessage message) async {
     if (message.isBinary) {
+      if (_fileSink == null) {
+        print("Binary received before metadata — buffering.");
+        _earlyChunks.add(message.binary); // Buffer until metadata arrives
+        return;
+      }
+
       _fileSink?.add(message.binary);
+      print("🔽 Received binary chunk: ${message.binary.length} bytes");
     } else {
       final text = message.text;
+      print("📩 Received text message: $text");
+
       if (text == 'EOF') {
         await _fileSink?.flush();
         await _fileSink?.close();
         _fileSink = null;
 
-        if (_incomingFilename != null && onFileReceived != null) {
-          final dir = await getApplicationDocumentsDirectory();
-          final path = '${dir.path}/$_incomingFilename';
-          onFileReceived?.call(path, _incomingMimeType ?? 'application/octet-stream');
-        }
+        final dir = await getApplicationDocumentsDirectory();
+        final path = '${dir.path}/$_incomingFilename';
+        print("📁 File saved at: $path");
+
+        onFileReceived?.call(path, _incomingMimeType ?? 'application/octet-stream');
       } else {
         try {
           final metadata = jsonDecode(text);
@@ -202,13 +235,24 @@ class PeerConnectionService {
             final dir = await getApplicationDocumentsDirectory();
             final file = File('${dir.path}/$_incomingFilename');
             _fileSink = file.openWrite();
+
+            print("📄 Received metadata: $metadata");
+
+            // Flush buffered chunks
+            for (final chunk in _earlyChunks) {
+              _fileSink?.add(chunk);
+              print("🧠 Writing buffered chunk: ${chunk.length} bytes");
+            }
+            _earlyChunks.clear();
           }
-        } catch (_) {
-          print("Unrecognized message: $text");
+        } catch (e) {
+          print("❌ Failed to parse metadata: $e");
         }
       }
     }
   }
+
+
 
 
   Future<void> handleSignal(Map<String, dynamic> data) async {
@@ -247,6 +291,7 @@ class PeerConnectionService {
         );
 
         if (_remoteDescriptionSet) {
+
           await _peerConnection.addCandidate(candidate);
         } else {
           _pendingCandidates.add(candidate);
