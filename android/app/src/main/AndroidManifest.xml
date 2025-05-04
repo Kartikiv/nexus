@@ -21,12 +21,31 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
 
     <application
         android:label="nexus"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <service android:name="de.julianassmann.flutter_background.IsolateHolderService"
+                 android:foregroundServiceType="mediaProjection"
+                 tools:targetApi="q"
+                 android:enabled="true"
+                 android:exported="false"/>
+        <service
+                android:name="com.cloudwebrtc.webrtc.ScreenCaptureService"
+                android:enabled="true"
+                android:exported="false"
+                android:foregroundServiceType="mediaProjection" />
+
+        <service
+                android:name="com.cloudwebrtc.webrtc.VoiceForegroundService"
+                android:exported="false"
+                android:foregroundServiceType="mediaProjection" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
