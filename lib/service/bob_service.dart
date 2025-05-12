@@ -64,7 +64,7 @@ Please generate a smart, friendly reply.
   }
 
   Future<String> _callOpenAI(String prompt) async {
-    const apiKey = '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'; // Replace with your OpenAI key
+    const apiKey = '';
     final url = Uri.parse("https://api.openai.com/v1/chat/completions");
 
     final request = await HttpClient().postUrl(url);
