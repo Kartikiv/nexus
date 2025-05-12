@@ -6,6 +6,31 @@ class ApiService {
   static final baseUrl = AppConfig.baseUrl;
   static final iceUrl = AppConfig.iceServerUrl;
 
+  static Future<List<String>?> postRegisteredUsers(List<String> numbers, String token) async {
+    final url = Uri.parse('$baseUrl/filterRegisteredUsers');
+    try {
+      final response = await http.post(
+        url,
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode(numbers),
+      );
+
+      if (response.statusCode == 200) {
+        final List<dynamic> data = jsonDecode(response.body);
+        return data.map((e) => e.toString()).toList();
+      } else {
+        return null;
+      }
+    } catch (e) {
+      print("Error posting contacts: $e");
+      return null;
+    }
+  }
+
+
   static Future<List<Map<String, dynamic>>?> getIceServers() async {
     try {
       final response = await http.get(
@@ -37,9 +62,7 @@ class ApiService {
 
 
 
-  static Future<List<Map<String, String>>?> getRegisteredUsers(String userName, String token) async {
-    final List<Map<String, String>> result = [];
-
+  static Future<Map<String, String>?> getRegisteredUser(String userName, String token) async {
     final url = Uri.parse('$baseUrl/getRegisteredUsers');
 
     try {
@@ -53,30 +76,21 @@ class ApiService {
       );
 
       if (response.statusCode == 200) {
-  final data = jsonDecode(response.body);
-  if (data != null &&
-  data['firstName'] != null &&
-  data['lastName'] != null &&
-  data['userName'] != null) {
-  result.add({
-  'firstName': data['firstName'],
-  'lastName': data['lastName'],
-  'userName': data['userName'],
-  });
-  }
-
-      return result;
+        final data = jsonDecode(response.body);
+        if (data != null &&
+            data['firstName'] != null &&
+            data['lastName'] != null &&
+            data['userName'] != null) {
+          return {
+            'firstName': data['firstName'],
+            'lastName': data['lastName'],
+            'userName': data['userName'],
+          };
+        }
       }
-
-
-
-
-  else {
-
-        return null;
-      }
+      return null;
     } catch (e) {
-
+      print('Error: $e');
       return null;
     }
   }
@@ -95,9 +109,9 @@ class ApiService {
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
-      final name = await getRegisteredUsers(data['username'], data['token']);
+      final name = await getRegisteredUser(data['username'], data['token']);
       return {
-        'firstName' : name != null && name.isNotEmpty ? name[0]['firstName'] : null,
+        'firstName' : name != null && name.isNotEmpty ? name['firstName'] : null,
         'username': data['username'],
         'token': data['token'],
       };

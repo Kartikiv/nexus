@@ -41,7 +41,7 @@ class _LoginScreenState extends State<LoginScreen> {
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (_) => ChatLobbyScreen(username: response['username'], firstName: response['firstName'],),
+            builder: (_) => ChatLobbyScreen(username: response['username'], firstName: response['firstName'], jwt:  response['token'],),
           ),
         );
       } else {

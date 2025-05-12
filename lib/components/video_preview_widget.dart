@@ -1,14 +1,12 @@
 import 'dart:io';
-import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
-import 'package:path_provider/path_provider.dart';
 
 class VideoPreviewWidget extends StatefulWidget {
-  final Uint8List videoBytes;
-  final String fileName;
+  final String filePath;
 
-  const VideoPreviewWidget({super.key, required this.videoBytes, required this.fileName});
+  const VideoPreviewWidget({super.key, required this.filePath});
 
   @override
   State<VideoPreviewWidget> createState() => _VideoPreviewWidgetState();
@@ -25,11 +23,7 @@ class _VideoPreviewWidgetState extends State<VideoPreviewWidget> {
   }
 
   Future<void> _initializePlayer() async {
-    final tempDir = await getTemporaryDirectory();
-    final file = File('${tempDir.path}/${widget.fileName}');
-    await file.writeAsBytes(widget.videoBytes);
-
-    _controller = VideoPlayerController.file(file);
+    _controller = VideoPlayerController.file(File(widget.filePath));
     await _controller.initialize();
     setState(() {
       _isInitialized = true;
@@ -45,7 +39,7 @@ class _VideoPreviewWidgetState extends State<VideoPreviewWidget> {
   @override
   Widget build(BuildContext context) {
     if (!_isInitialized) {
-      return const CircularProgressIndicator();
+      return const Center(child: CircularProgressIndicator());
     }
 
     return Column(
@@ -55,7 +49,9 @@ class _VideoPreviewWidgetState extends State<VideoPreviewWidget> {
           child: VideoPlayer(_controller),
         ),
         IconButton(
-          icon: Icon(_controller.value.isPlaying ? Icons.pause : Icons.play_arrow),
+          icon: Icon(
+            _controller.value.isPlaying ? Icons.pause : Icons.play_arrow,
+          ),
           onPressed: () {
             setState(() {
               _controller.value.isPlaying ? _controller.pause() : _controller.play();
